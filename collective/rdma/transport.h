@@ -529,6 +529,8 @@ class RDMAContext {
 
   friend class SwiftRDMAContext;
 
+  friend class PcmRDMAContext;
+
   friend class EQDSRDMAContext;
 };
 
@@ -726,6 +728,92 @@ class TimelyRDMAContext : public RDMAContext {
 
   void EventOnRxCredit(SubUcclFlow* subflow, eqds::PullQuanta pullno) override {
   }
+};
+
+class PcmRDMAContext : public RDMAContext {
+ public:
+  using RDMAContext::RDMAContext;
+
+  uint32_t EventOnSelectPath(SubUcclFlow* subflow,
+                             uint32_t chunk_size) override {
+    return select_qpidx_pot(chunk_size, subflow);
+  }
+
+  uint32_t EventOnChunkSize(SubUcclFlow* subflow,
+                            uint32_t remaining_bytes) override {
+    if (remaining_bytes <= chunk_size_) return remaining_bytes;
+
+    auto hard_budget = (is_roce() ? kMaxUnAckedBytesPerEngineHighForRoCE
+                                  : kMaxUnAckedBytesPerEngineHighForIB) -
+                       *engine_unacked_bytes_;
+    auto soft_budget = (is_roce() ? kMaxUnAckedBytesPerEngineLowForRoCE
+                                  : kMaxUnAckedBytesPerEngineLowForIB) -
+                       *engine_unacked_bytes_;
+    auto flow_budget = kMaxUnAckedBytesPerFlow - subflow->unacked_bytes_;
+
+    subflow->pcb.pcm_cc->fetch_slab_output();
+
+    // cwnd_evolution[cur_cwnd_sample_id] = subflow->pcb.pcm_io_slab->out.cwnd;
+    if (cur_cwnd_sample_id == 10000000 - 1) {
+      std::cout << "PCM cwnd sample: " << subflow->pcb.pcm_io_slab->out.cwnd
+                << "\n";
+      //   std::cout << "cwnd samples: " << std::endl;
+      //   for (const auto & sample : cwnd_evolution) {
+      //     std::cout << sample << ", ";
+      //   }
+      //   std::cout << "end of cwnd samples" << std::endl;
+    }
+    cur_cwnd_sample_id = (cur_cwnd_sample_id + 1) % 10000000;
+
+    auto cc_budget = static_cast<uint32_t>(subflow->pcb.pcm_io_slab->out.cwnd) -
+                     subflow->unacked_bytes_;
+
+    // Enforce swift congestion control window.
+    auto ready_bytes = std::min(remaining_bytes, cc_budget);
+
+    // Chunking to CHUNK_SIZE.
+    ready_bytes = std::min(ready_bytes, chunk_size_);
+
+    // First, check if we have touched the hard budget.
+    if (ready_bytes > hard_budget) return 0;
+
+    // Second, check if we have touched the soft budget.
+    // If we havent touched our per-flow budget, we can ignore the soft budget.
+    if (ready_bytes <= soft_budget || ready_bytes <= flow_budget)
+      return ready_bytes;
+
+    return 0;
+  }
+
+  bool EventOnQueueData(SubUcclFlow* subflow, struct wr_ex* wr_ex,
+                        uint32_t full_chunk_size, uint64_t now) override {
+    return false;
+  }
+
+  void EventOnRxData(SubUcclFlow* subflow, IMMData* imm_data) override {}
+
+  bool EventOnTxRTXData(SubUcclFlow* subflow, struct wr_ex* wr_ex) override {
+    return true;
+  }
+
+  void EventOnRxRTXData(SubUcclFlow* subflow, IMMData* imm_data) override {}
+
+  void EventOnRxACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {}
+
+  void EventOnRxNACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {
+    subflow->pcb.pcm_io_slab->in.nack = sack_hdr->sack_bitmap_count.value();
+    subflow->pcb.pcm_io_slab->in.data_nacked =
+        sack_hdr->sack_bitmap_count.value() * chunk_size_;
+    subflow->pcb.pcm_cc->flush_slab_input();
+    subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+    // std::cout << "got NACK!" << std::endl;
+  }
+
+  void EventOnRxCredit(SubUcclFlow* subflow, eqds::PullQuanta pullno) override {
+  }
+
+  size_t cur_cwnd_sample_id{0};
+  std::vector<uint64_t> cwnd_evolution = std::vector<uint64_t>(1000, 0);
 };
 
 /**

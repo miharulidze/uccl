@@ -226,6 +226,7 @@ int RDMAFactory::init_devs() {
   }
   ibv_free_device_list(devices);
 
+#ifdef USE_GPU
   // Get the GPUs, RDMA NICs, and their best mapping.
   {
     // Sorted by the GPU name.
@@ -276,6 +277,7 @@ int RDMAFactory::init_devs() {
                     << ", dev_idx: " << dev_idx << "\n";
     }
   }
+#endif
   // Forcily output the log for better debugging in case of error.
   printf("%s", init_devs_log.str().c_str());
 
@@ -310,6 +312,9 @@ RDMAContext* RDMAFactory::CreateContext(TimerManager* rto,
   else if constexpr (kSenderCCA == SENDER_CCA_SWIFT)
     ctx = new SwiftRDMAContext(rto, engine_unacked_bytes, eqds, dev,
                                engine_offset, meta, io_ctx);
+  else if constexpr (kSenderCCA == SENDER_CCA_PCM)
+    ctx = new PcmRDMAContext(rto, engine_unacked_bytes, eqds, dev,
+                             engine_offset, meta, io_ctx);
 
   CHECK(ctx != nullptr);
   return ctx;
@@ -358,10 +363,18 @@ std::pair<uint64_t, uint32_t> TXTracking::ack_rc_transmitted_chunks(
 
   auto newrtt_tsc = now - tx_timestamp;
 
-  subflow->pcb.timely_cc.update_rate(now, newrtt_tsc, kEwmaAlpha);
-
-  subflow->pcb.swift_cc.adjust_wnd(to_usec(newrtt_tsc, freq_ghz), acked_bytes);
-
+  if constexpr (kSenderCCA != SENDER_CCA_PCM) {
+    subflow->pcb.timely_cc.update_rate(now, newrtt_tsc, kEwmaAlpha);
+    subflow->pcb.swift_cc.adjust_wnd(to_usec(newrtt_tsc, freq_ghz),
+                                     acked_bytes);
+  } else {
+    subflow->pcb.pcm_io_slab->in.data_tx = acked_bytes;
+    subflow->pcb.pcm_io_slab->in.ack = 1;
+    subflow->pcb.pcm_io_slab->in.rtt = tsc_to_ns(newrtt_tsc);
+    subflow->pcb.pcm_io_slab->in.in_flight = *flow_unacked_bytes;
+    subflow->pcb.pcm_cc->flush_slab_input();
+    subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+  }
   return std::make_pair(tx_timestamp, qpidx);
 }
 
@@ -462,11 +475,20 @@ uint64_t TXTracking::ack_transmitted_chunks(void* subflow_context,
 #endif
 
   if (fabric_delay_tsc) {
-    // Update global cwnd.
-    subflow->pcb.timely_cc.update_rate(t6, fabric_delay_tsc, kEwmaAlpha);
-    // TODO: seperate enpoint delay and fabric delay.
-    subflow->pcb.swift_cc.adjust_wnd(to_usec(fabric_delay_tsc, freq_ghz),
-                                     seg_size);
+    if constexpr (kSenderCCA != SENDER_CCA_PCM) {
+      // Update global cwnd.
+      subflow->pcb.timely_cc.update_rate(t6, fabric_delay_tsc, kEwmaAlpha);
+      // TODO: seperate enpoint delay and fabric delay.
+      subflow->pcb.swift_cc.adjust_wnd(to_usec(fabric_delay_tsc, freq_ghz),
+                                       seg_size);
+    } else {
+      subflow->pcb.pcm_io_slab->in.data_tx = seg_size;
+      subflow->pcb.pcm_io_slab->in.ack = 1;
+      subflow->pcb.pcm_io_slab->in.rtt = tsc_to_ns(fabric_delay_tsc);
+      subflow->pcb.pcm_io_slab->in.in_flight = *flow_unacked_bytes;
+      subflow->pcb.pcm_cc->flush_slab_input();
+      subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+    }
   }
 
   return fabric_delay_tsc;

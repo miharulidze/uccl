@@ -44,7 +44,7 @@ class CreditChunkBuffPool : public BuffPool {
  public:
   static constexpr uint32_t kPktSize = 4;
   static constexpr uint32_t kChunkSize = kPktSize * 1;
-  static constexpr uint32_t kNumChunk = kMaxBatchCQ << 6;
+  static constexpr uint32_t kNumChunk = kMaxBatchCQ << 7;
   static constexpr uint32_t kCreditMRSize = kNumChunk * kChunkSize;
   static_assert((kNumChunk & (kNumChunk - 1)) == 0,
                 "kNumChunk must be power of 2");

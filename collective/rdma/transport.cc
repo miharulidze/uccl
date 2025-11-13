@@ -1922,7 +1922,7 @@ RDMAContext::RDMAContext(TimerManager* rto, uint32_t* engine_unacked_bytes,
     qp_init_attr.qp_type = IBV_QPT_UC;
   else
     qp_init_attr.qp_type = IBV_QPT_RC;
-  qp_init_attr.cap.max_send_wr = 2 * kMaxReq * kMaxRecv;
+  qp_init_attr.cap.max_send_wr = 4096;//2 * kMaxReq * kMaxRecv;
   qp_init_attr.cap.max_send_sge = kMaxSge;
   qp_init_attr.cap.max_inline_data = 0;
   qp_init_attr.srq = io_ctx->srq_;
@@ -2233,6 +2233,7 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
       struct wr_ex* wr_ex = reinterpret_cast<struct wr_ex*>(wr_addr);
       auto wr = &wr_ex->wr;
 
+      //std::cout << "chunk_size=" << chunk_size << " sent_offset=" << *sent_offset << std::endl;
       wr_ex->sge.addr = laddr + *sent_offset;
       wr_ex->sge.lkey = lkey;
       wr_ex->sge.length = chunk_size;
@@ -2274,7 +2275,15 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
       wr_ex->qpidx = qpidx;
 
       struct ibv_send_wr* bad_wr;
-      DCHECK(ibv_post_send(qpw->qp, wr, &bad_wr) == 0);
+      int ret;
+      if ((ret = ibv_post_send(qpw->qp, wr, &bad_wr)) != 0) {
+        fprintf(stderr,
+                "ibv_post_send failed: ret=%d (%s)   wr_id=%lu  lkey=0x%x "
+                "rkey=0x%x  len=%u offset=%lu\n",
+                ret, strerror(ret), wr->wr_id, wr_ex->sge.lkey, wr->wr.rdma.rkey,
+                wr_ex->sge.length, *sent_offset);
+        exit(EXIT_FAILURE);
+      }
 
       // Track this chunk.
       subflow->txtracking.track_chunk(ureq, wr_ex, now, imm_data.GetCSN(),
@@ -2286,6 +2295,11 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
 
       *sent_offset += chunk_size;
 
+      // std::cout << "Tx: flow#" << flow->flowid() << "/" << flow << ", req id#"
+      //             << ureq->send.rid << ", msg id#" << ureq->mid
+      //             << ", csn:" << imm_data.GetCSN()
+      //             << ", remaining bytes:" << size - *sent_offset << " with QP#"
+      //             << qpidx << std::endl;
       UCCL_LOG_IO << "Tx: flow#" << flow->flowid() << "/" << flow << ", req id#"
                   << ureq->send.rid << ", msg id#" << ureq->mid
                   << ", csn:" << imm_data.GetCSN()

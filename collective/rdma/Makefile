@@ -4,13 +4,13 @@ ABS_REPO_ROOT := $(shell realpath $(ABS_ROOT_PATH)/../..)
 NCCL_HOME:=$(ABS_REPO_ROOT)/thirdparty/nccl
 CUDA_HOME?=/usr/local/cuda
 
-INC = -I./ -I$(CUDA_HOME)/include -I$(ABS_REPO_ROOT)/include
+INC = -I./ -I$(CUDA_HOME)/include -I$(ABS_REPO_ROOT)/include -I$(ABS_REPO_ROOT)/thirdparty/pcm-sdk/pcm/include/
 LIBS = -lglog -lgflags -lgtest -lz -lelf -libverbs -L /usr/local/cuda/lib64 -lcudart -lpthread
 LIBS_SHARED = -lglog -lgflags -lgtest -lz -lelf -libverbs
-override CXXFLAGS += -O3 -g -std=c++17 -Wno-pointer-arith -Wno-interference-size -fPIC -DUSE_CUDA
+override CXXFLAGS += -O3 -g -std=c++23 -Wno-pointer-arith -Wno-interference-size -fPIC -DUSE_CUDA
 DEPS = *.h
 PLUGIN_SO = libnccl-net-uccl.so
-NCCL_INC:= -I$(NCCL_HOME)/build/include -I$(NCCL_HOME)/src/include -I$(CUDA_HOME)/include
+NCCL_INC:= -I$(NCCL_HOME)/build/include -I$(NCCL_HOME)/src/include -I$(NCCL_HOME)/src/include/plugin/ -I$(CUDA_HOME)/include
 
 lib_src = $(wildcard *.cc)
 lib_src := $(filter-out %_main.cc,$(lib_src))
