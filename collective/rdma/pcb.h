@@ -34,14 +34,21 @@ struct PCB {
 
   PCB(double link_bandwidth)
       : timely_cc(freq_ghz, link_bandwidth),
-        swift_cc(freq_ghz, link_bandwidth),
-        pcm_library{open_pcm_algo()} {
-    if (pcm_library.first && kSenderCCA == SENDER_CCA_PCM) {
-      pcm_cc = std::unique_ptr<pcm_vm::PcmHandlerVmDesc>(pcm_library.second()),
+        swift_cc(freq_ghz, link_bandwidth) {
+    if constexpr (kSenderCCA == SENDER_CCA_PCM ||
+                  kSenderCCA == SENDER_CCA_PCM_LB) {
+      pcm_cc_library = open_pcm_algo("UCCL_PCM_CC_ALGO");
+      pcm_cc =
+          std::unique_ptr<pcm_vm::PcmHandlerVmDesc>(pcm_cc_library.second());
       pcm_cc->add_get_time_source(ns_rdtsc);
-      pcm_io_slab = &pcm_cc->get_signal_io_slab();
-    } else if (!pcm_library.first && kSenderCCA == SENDER_CCA_PCM) {
-      throw std::runtime_error{"Failed to load PCM algorithm."};
+      pcm_cc_io_slab = &pcm_cc->get_signal_io_slab();
+    }
+    if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      pcm_lb_library = open_pcm_algo("UCCL_PCM_LB_ALGO");
+      pcm_lb =
+          std::unique_ptr<pcm_vm::PcmHandlerVmDesc>(pcm_lb_library.second());
+      pcm_lb->add_get_time_source(ns_rdtsc);
+      pcm_lb_io_slab = &pcm_lb->get_signal_io_slab();
     }
   }
 
@@ -51,10 +58,16 @@ struct PCB {
 
   using pcm_factory_fn_ptr = pcm_vm::PcmHandlerVmDesc* (*)();
   using pcm_factory_so_ptr = std::shared_ptr<void>;
-  std::pair<pcm_factory_so_ptr, pcm_factory_fn_ptr> pcm_library;
+
+  // PCM CC
+  std::pair<pcm_factory_so_ptr, pcm_factory_fn_ptr> pcm_cc_library;
   std::unique_ptr<pcm_vm::PcmHandlerVmDesc> pcm_cc;
-  // Pointer to the PCM VM's IO slab (points into the object owned by pcm_cc)
-  pcm_vm::PcmHandlerVmIoSlab* pcm_io_slab = nullptr;
+  pcm_vm::PcmHandlerVmIoSlab* pcm_cc_io_slab = nullptr;
+
+  // PCM LB
+  std::pair<pcm_factory_so_ptr, pcm_factory_fn_ptr> pcm_lb_library;
+  std::unique_ptr<pcm_vm::PcmHandlerVmDesc> pcm_lb;
+  pcm_vm::PcmHandlerVmIoSlab* pcm_lb_io_slab = nullptr;
 
   eqds::EQDSCC eqds_cc;
 
@@ -151,12 +164,15 @@ struct PCB {
   }
 
  private:
-  static std::pair<pcm_factory_so_ptr, pcm_factory_fn_ptr> open_pcm_algo() {
-    char const* pcm_algo_env = std::getenv("UCCL_PCM_ALGO");
+  static std::pair<pcm_factory_so_ptr, pcm_factory_fn_ptr> open_pcm_algo(
+      char const* envvar) {
+    char const* pcm_algo_env = std::getenv(envvar);
     if (!pcm_algo_env) {
-      return {nullptr, nullptr};
+      throw std::runtime_error{"Failed to obtain PCM algorithm envvar"};
     }
     std::string pcm_algo_name{pcm_algo_env};
+    std::cerr << "PCM: user requested algorithm: " << pcm_algo_name
+              << std::endl;
     // Open shared object that contains PCM VM factory function
     std::string spec_lib_name = "lib" + std::string{pcm_algo_name} + "_spec.so";
     std::string vm_factory_fn_name =

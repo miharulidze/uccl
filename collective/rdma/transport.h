@@ -281,7 +281,6 @@ class RDMAContext {
   double nic_ts_offset_;
 
   uint32_t consecutive_same_choice_bytes_ = 0;
-  uint32_t last_qp_choice_ = 0;
 
   uint32_t* engine_unacked_bytes_;
 
@@ -292,6 +291,8 @@ class RDMAContext {
   inline bool rc_mode() { return io_ctx_->rc_mode_; }
 
  public:
+  uint32_t last_qp_choice_ = 0;
+
   // 256-bit SACK bitmask => we can track up to 256 packets
   static constexpr std::size_t kReassemblyMaxSeqnoDistance = kSackBitmapSize;
 
@@ -755,7 +756,7 @@ class PcmRDMAContext : public RDMAContext {
 
     // cwnd_evolution[cur_cwnd_sample_id] = subflow->pcb.pcm_io_slab->out.cwnd;
     if (cur_cwnd_sample_id == 10000000 - 1) {
-      std::cout << "PCM cwnd sample: " << subflow->pcb.pcm_io_slab->out.cwnd
+      std::cout << "PCM cwnd sample: " << subflow->pcb.pcm_cc_io_slab->out.cwnd
                 << "\n";
       //   std::cout << "cwnd samples: " << std::endl;
       //   for (const auto & sample : cwnd_evolution) {
@@ -765,8 +766,9 @@ class PcmRDMAContext : public RDMAContext {
     }
     cur_cwnd_sample_id = (cur_cwnd_sample_id + 1) % 10000000;
 
-    auto cc_budget = static_cast<uint32_t>(subflow->pcb.pcm_io_slab->out.cwnd) -
-                     subflow->unacked_bytes_;
+    auto cc_budget =
+        static_cast<uint32_t>(subflow->pcb.pcm_cc_io_slab->out.cwnd) -
+        subflow->unacked_bytes_;
 
     // Enforce swift congestion control window.
     auto ready_bytes = std::min(remaining_bytes, cc_budget);
@@ -801,8 +803,8 @@ class PcmRDMAContext : public RDMAContext {
   void EventOnRxACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {}
 
   void EventOnRxNACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {
-    subflow->pcb.pcm_io_slab->in.nack = sack_hdr->sack_bitmap_count.value();
-    subflow->pcb.pcm_io_slab->in.data_nacked =
+    subflow->pcb.pcm_cc_io_slab->in.nack = sack_hdr->sack_bitmap_count.value();
+    subflow->pcb.pcm_cc_io_slab->in.data_nacked =  // 1 * chunk_size_;
         sack_hdr->sack_bitmap_count.value() * chunk_size_;
     subflow->pcb.pcm_cc->flush_slab_input();
     subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
@@ -814,6 +816,30 @@ class PcmRDMAContext : public RDMAContext {
 
   size_t cur_cwnd_sample_id{0};
   std::vector<uint64_t> cwnd_evolution = std::vector<uint64_t>(1000, 0);
+};
+
+class PcmLbRDMAContext : public PcmRDMAContext {
+ public:
+  using PcmRDMAContext::PcmRDMAContext;
+
+  uint32_t EventOnSelectPath(SubUcclFlow* subflow,
+                             uint32_t chunk_size) override {
+    if (can_use_last_choice(chunk_size)) return last_qp_choice_;
+    subflow->pcb.pcm_lb_io_slab->in.tx_ready_pkts = 1;
+    subflow->pcb.pcm_lb->flush_slab_input();
+    subflow->pcb.pcm_lb->invoke_cc_algorithm_on_trigger();
+    subflow->pcb.pcm_lb->fetch_slab_output();
+    last_qp_choice_ = subflow->pcb.pcm_lb_io_slab->out.ev;
+    return subflow->pcb.pcm_lb_io_slab->out.ev;
+  }
+
+  void EventOnRxNACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {
+    // Call base implementation (note the exact capitalization of the method)
+    PcmRDMAContext::EventOnRxNACK(subflow, sack_hdr);
+    subflow->pcb.pcm_lb_io_slab->in.nack = 1;
+    subflow->pcb.pcm_lb_io_slab->in.nack_ev = sack_hdr->path.value();
+    subflow->pcb.pcm_lb->flush_slab_input();
+  }
 };
 
 /**

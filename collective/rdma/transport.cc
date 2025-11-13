@@ -1922,7 +1922,7 @@ RDMAContext::RDMAContext(TimerManager* rto, uint32_t* engine_unacked_bytes,
     qp_init_attr.qp_type = IBV_QPT_UC;
   else
     qp_init_attr.qp_type = IBV_QPT_RC;
-  qp_init_attr.cap.max_send_wr = 4096;//2 * kMaxReq * kMaxRecv;
+  qp_init_attr.cap.max_send_wr = 4096;  // 2 * kMaxReq * kMaxRecv;
   qp_init_attr.cap.max_send_sge = kMaxSge;
   qp_init_attr.cap.max_inline_data = 0;
   qp_init_attr.srq = io_ctx->srq_;
@@ -2233,7 +2233,8 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
       struct wr_ex* wr_ex = reinterpret_cast<struct wr_ex*>(wr_addr);
       auto wr = &wr_ex->wr;
 
-      //std::cout << "chunk_size=" << chunk_size << " sent_offset=" << *sent_offset << std::endl;
+      // std::cout << "chunk_size=" << chunk_size << " sent_offset=" <<
+      // *sent_offset << std::endl;
       wr_ex->sge.addr = laddr + *sent_offset;
       wr_ex->sge.lkey = lkey;
       wr_ex->sge.length = chunk_size;
@@ -2262,7 +2263,11 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
         wr->wr_id = 0;
 
       // Select QP.
-      qpidx = select_qpidx_pot(chunk_size, subflow);
+      if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+        qpidx = EventOnSelectPath(subflow, chunk_size);
+      } else {
+        qpidx = select_qpidx_pot(chunk_size, subflow);
+      }
       auto qpw = &dp_qps_[qpidx];
 
       wr->send_flags = 0;
@@ -2280,8 +2285,8 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
         fprintf(stderr,
                 "ibv_post_send failed: ret=%d (%s)   wr_id=%lu  lkey=0x%x "
                 "rkey=0x%x  len=%u offset=%lu\n",
-                ret, strerror(ret), wr->wr_id, wr_ex->sge.lkey, wr->wr.rdma.rkey,
-                wr_ex->sge.length, *sent_offset);
+                ret, strerror(ret), wr->wr_id, wr_ex->sge.lkey,
+                wr->wr.rdma.rkey, wr_ex->sge.length, *sent_offset);
         exit(EXIT_FAILURE);
       }
 
@@ -2295,10 +2300,12 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
 
       *sent_offset += chunk_size;
 
-      // std::cout << "Tx: flow#" << flow->flowid() << "/" << flow << ", req id#"
+      // std::cout << "Tx: flow#" << flow->flowid() << "/" << flow << ", req
+      // id#"
       //             << ureq->send.rid << ", msg id#" << ureq->mid
       //             << ", csn:" << imm_data.GetCSN()
-      //             << ", remaining bytes:" << size - *sent_offset << " with QP#"
+      //             << ", remaining bytes:" << size - *sent_offset << " with
+      //             QP#"
       //             << qpidx << std::endl;
       UCCL_LOG_IO << "Tx: flow#" << flow->flowid() << "/" << flow << ", req id#"
                   << ureq->send.rid << ", msg id#" << ureq->mid
@@ -2375,7 +2382,11 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
       } else {
         // Transmit this chunk directly.
         // Select QP.
-        auto qpidx = select_qpidx_pot(chunk_size, subflow);
+        if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+          qpidx = EventOnSelectPath(subflow, chunk_size);
+        } else {
+          qpidx = select_qpidx_pot(chunk_size, subflow);
+        }
         auto qpw = &dp_qps_[qpidx];
         // There is no need to signal every WQE since we don't handle TX
         // completions. But we still need occasionally post a request
@@ -2467,7 +2478,13 @@ bool RDMAContext::senderCC_tx_write(struct ucclRequest* ureq) {
     int csn = subflow->pcb.get_snd_nxt().to_uint32();
     wr->wr_id = (1ULL * csn) << 56 | (uint64_t)subflow;
 
-    uint32_t qpidx = select_qpidx_pot(chunk_size, subflow);
+    // Select QP.
+    uint32_t qpidx;
+    if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      qpidx = EventOnSelectPath(subflow, chunk_size);
+    } else {
+      qpidx = select_qpidx_pot(chunk_size, subflow);
+    }
     auto& qpw = dp_qps_[qpidx];
     wr_ex->qpidx = qpidx;
 
@@ -2544,7 +2561,13 @@ bool RDMAContext::senderCC_tx_read(struct ucclRequest* ureq) {
     int csn = subflow->pcb.get_snd_nxt().to_uint32();
     wr->wr_id = (1ULL * csn) << 56 | (uint64_t)subflow;
 
-    uint32_t qpidx = select_qpidx_pot(chunk_size, subflow);
+    uint32_t qpidx;
+    // Select QP.
+    if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      qpidx = EventOnSelectPath(subflow, chunk_size);
+    } else {
+      qpidx = select_qpidx_pot(chunk_size, subflow);
+    }
     auto& qpw = dp_qps_[qpidx];
     wr_ex->qpidx = qpidx;
 
@@ -2937,7 +2960,12 @@ void RDMAContext::burst_timing_wheel(void) {
     auto* flow = reinterpret_cast<UcclFlow*>(wr_ex->ureq->context);
     auto* subflow = flow->sub_flows_[engine_offset_];
     // Select QP.
-    auto qpidx = select_qpidx_pot(wr_ex->sge.length, subflow);
+    uint32_t qpidx;
+    if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      qpidx = EventOnSelectPath(subflow, wr_ex->sge.length);
+    } else {
+      qpidx = select_qpidx_pot(wr_ex->sge.length, subflow);
+    }
     auto qpw = &dp_qps_[qpidx];
 
     wr->send_flags = 0;
