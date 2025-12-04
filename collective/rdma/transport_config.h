@@ -87,10 +87,9 @@ enum ReceiverCCA {
 };
 
 //static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_PCM;
+//static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_PCM_LB;
 
-static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_PCM_LB;
-
-//static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_TIMELY;
+static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_TIMELY;
 static constexpr enum ReceiverCCA kReceiverCCA = RECEIVER_CCA_NONE;
 static_assert(kSenderCCA != SENDER_CCA_NONE ||
                   kReceiverCCA != RECEIVER_CCA_NONE,

@@ -1,10 +1,10 @@
 ABS_ROOT_PATH := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 ABS_REPO_ROOT := $(shell realpath $(ABS_ROOT_PATH)/../..)
 
-NCCL_HOME:=$(ABS_REPO_ROOT)/thirdparty/nccl
+NCCL_HOME:=$(ABS_REPO_ROOT)/../../pcm/uccl/thirdparty/nccl
 CUDA_HOME?=/usr/local/cuda
 
-INC = -I./ -I$(CUDA_HOME)/include -I$(ABS_REPO_ROOT)/include -I$(ABS_REPO_ROOT)/thirdparty/pcm-sdk/pcm/include/
+INC = -I./ -I$(CUDA_HOME)/include -I$(ABS_REPO_ROOT)/include -I$(ABS_REPO_ROOT)/../pcm-sdk/pcm/include/
 LIBS = -lglog -lgflags -lgtest -lz -lelf -libverbs -L /usr/local/cuda/lib64 -lcudart -lpthread
 LIBS_SHARED = -lglog -lgflags -lgtest -lz -lelf -libverbs
 override CXXFLAGS += -O3 -g -std=c++23 -Wno-pointer-arith -Wno-interference-size -fPIC -DUSE_CUDA
