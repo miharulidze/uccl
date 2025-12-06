@@ -13,6 +13,7 @@
 #include <string>
 #include <utility>
 #include <endian.h>
+#include <sys/syscall.h>
 
 namespace uccl {
 
@@ -435,6 +436,8 @@ void UcclRDMAEngine::handle_timing_wheel(void) {
 }
 
 void UcclRDMAEngine::run() {
+  std::cout << "Engine started running at tid=" << syscall(SYS_gettid)
+            << std::endl;
   while (!shutdown_) {
     // Calculate the cycles elapsed since last periodic processing.
     auto now_tsc = rdtsc();
@@ -2264,9 +2267,13 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
 
       // Select QP.
       if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+        perf_timing_.start();
         qpidx = EventOnSelectPath(subflow, chunk_size);
+        perf_timing_.stop(true, "[pcm_lb]");
       } else {
+        perf_timing_.start();
         qpidx = select_qpidx_pot(chunk_size, subflow);
+        perf_timing_.stop(true, "[uccl_lb]");
       }
       auto qpw = &dp_qps_[qpidx];
 
@@ -2383,9 +2390,13 @@ bool RDMAContext::senderCC_tx_message(struct ucclRequest* ureq) {
         // Transmit this chunk directly.
         // Select QP.
         if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+          perf_timing_.start();
           qpidx = EventOnSelectPath(subflow, chunk_size);
+          perf_timing_.stop(true, "[pcm_lb]");
         } else {
+          perf_timing_.start();
           qpidx = select_qpidx_pot(chunk_size, subflow);
+          perf_timing_.stop(true, "[uccl_lb]");
         }
         auto qpw = &dp_qps_[qpidx];
         // There is no need to signal every WQE since we don't handle TX
@@ -2481,9 +2492,13 @@ bool RDMAContext::senderCC_tx_write(struct ucclRequest* ureq) {
     // Select QP.
     uint32_t qpidx;
     if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      perf_timing_.start();
       qpidx = EventOnSelectPath(subflow, chunk_size);
+      perf_timing_.stop(true, "[pcm_lb]");
     } else {
+      perf_timing_.start();
       qpidx = select_qpidx_pot(chunk_size, subflow);
+      perf_timing_.stop(true, "[uccl_lb]");
     }
     auto& qpw = dp_qps_[qpidx];
     wr_ex->qpidx = qpidx;
@@ -2564,9 +2579,13 @@ bool RDMAContext::senderCC_tx_read(struct ucclRequest* ureq) {
     uint32_t qpidx;
     // Select QP.
     if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      perf_timing_.start();
       qpidx = EventOnSelectPath(subflow, chunk_size);
+      perf_timing_.stop(true, "[pcm_lb]");
     } else {
+      perf_timing_.start();
       qpidx = select_qpidx_pot(chunk_size, subflow);
+      perf_timing_.stop(true, "[uccl_lb]");
     }
     auto& qpw = dp_qps_[qpidx];
     wr_ex->qpidx = qpidx;
@@ -2962,9 +2981,13 @@ void RDMAContext::burst_timing_wheel(void) {
     // Select QP.
     uint32_t qpidx;
     if constexpr (kSenderCCA == SENDER_CCA_PCM_LB) {
+      perf_timing_.start();
       qpidx = EventOnSelectPath(subflow, wr_ex->sge.length);
+      perf_timing_.stop(true, "[pcm_lb]");
     } else {
+      perf_timing_.start();
       qpidx = select_qpidx_pot(wr_ex->sge.length, subflow);
+      perf_timing_.stop(true, "[uccl_lb]");
     }
     auto qpw = &dp_qps_[qpidx];
 

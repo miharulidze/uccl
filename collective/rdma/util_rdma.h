@@ -187,7 +187,7 @@ static inline void util_rdma_create_qp(
   qp_init_attr.recv_cq = *cq;
   qp_init_attr.qp_type = qp_type;
 
-  qp_init_attr.cap.max_send_wr = max_send_wr;
+  qp_init_attr.cap.max_send_wr = max_send_wr * 4;
   qp_init_attr.cap.max_recv_wr = max_recv_wr;
   qp_init_attr.cap.max_send_sge = max_send_sge;
   qp_init_attr.cap.max_recv_sge = max_recv_sge;

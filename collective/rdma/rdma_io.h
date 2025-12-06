@@ -1,8 +1,11 @@
 #ifndef RDMA_IO_H
 #define RDMA_IO_H
 
+#define ENABLE_TIMING_LIB
+
 #include "eqds.h"
 #include "pcb.h"
+#include "timing.hpp"
 #include "transport_config.h"
 #include "util/endian.h"
 #include "util/list.h"
@@ -315,6 +318,12 @@ class RXTracking {
 
 class TXTracking {
  public:
+
+  using timing_backend = timing_lib::RdtscTimer;
+  timing_backend stats{
+      timing_lib::benchmark_timer<timing_backend>("PcmHandlerVm timer")};
+  timing_backend perf_timing_{stats};
+
   struct ChunkTrack {
     struct ucclRequest* ureq;
     struct wr_ex* wr_ex;

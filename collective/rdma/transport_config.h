@@ -87,9 +87,9 @@ enum ReceiverCCA {
 };
 
 //static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_PCM;
-//static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_PCM_LB;
+static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_PCM_LB;
 
-static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_TIMELY;
+//static constexpr enum SenderCCA kSenderCCA = SENDER_CCA_TIMELY;
 static constexpr enum ReceiverCCA kReceiverCCA = RECEIVER_CCA_NONE;
 static_assert(kSenderCCA != SENDER_CCA_NONE ||
                   kReceiverCCA != RECEIVER_CCA_NONE,
@@ -183,7 +183,10 @@ static constexpr uint32_t kPostRQThreshold = kMaxBatchCQ;
 // 1 means always send immediate ack.
 static constexpr uint32_t kMAXCumWQE = 4;
 // When the cumulative bytes reach kMAXCumBytes, send immediate ack.
-static uint32_t kMAXCumBytes = kMAXCumWQE * (ucclParamCHUNK_SIZE_KB() << 10);
+//static uint32_t kMAXCumBytes = kMAXCumWQE * (ucclParamCHUNK_SIZE_KB() << 10);
+// Try this instead
+static uint32_t kMAXCumBytes =
+    kMAXCumWQE * std::max((uint32_t)(ucclParamCHUNK_SIZE_KB() << 10), 32768u);
 // Before reaching it, the receiver will not consider that it has encountered
 // OOO, and thus there is no immediate ack. This is to tolerate the OOO caused
 // by the sender's qp scheduling.

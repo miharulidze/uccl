@@ -368,16 +368,27 @@ std::pair<uint64_t, uint32_t> TXTracking::ack_rc_transmitted_chunks(
 
   if constexpr (kSenderCCA != SENDER_CCA_PCM &&
                 kSenderCCA != SENDER_CCA_PCM_LB) {
+    perf_timing_.start();
     subflow->pcb.timely_cc.update_rate(now, newrtt_tsc, kEwmaAlpha);
+    perf_timing_.stop(true, "[subflow->pcb.timely_cc.update_rate]");
+    perf_timing_.start();
     subflow->pcb.swift_cc.adjust_wnd(to_usec(newrtt_tsc, freq_ghz),
                                      acked_bytes);
+    perf_timing_.stop(true, "[subflow->pcb.swift_cc.adjust_wnd]");
   } else {
+    perf_timing_.start();
     subflow->pcb.pcm_cc_io_slab->in.data_tx = acked_bytes;
     subflow->pcb.pcm_cc_io_slab->in.ack = 1;
     subflow->pcb.pcm_cc_io_slab->in.rtt = tsc_to_ns(newrtt_tsc);
     subflow->pcb.pcm_cc_io_slab->in.in_flight = *flow_unacked_bytes;
+    subflow->pcb.pcm_cc_io_slab->in.mask |=
+        (1 << PCM_SIG_DATA_TX) | (1 << PCM_SIG_ACK) | (1 << PCM_SIG_RTT) |
+        (1 << PCM_SIG_IN_FLIGHT);
     subflow->pcb.pcm_cc->flush_slab_input();
-    subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+    auto invoked = subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+    if (invoked)
+      perf_timing_.stop(
+          true, "[subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger()]");
   }
   return std::make_pair(tx_timestamp, qpidx);
 }
@@ -482,17 +493,28 @@ uint64_t TXTracking::ack_transmitted_chunks(void* subflow_context,
     if constexpr (kSenderCCA != SENDER_CCA_PCM &&
                   kSenderCCA != SENDER_CCA_PCM_LB) {
       // Update global cwnd.
+      perf_timing_.start();
       subflow->pcb.timely_cc.update_rate(t6, fabric_delay_tsc, kEwmaAlpha);
+      perf_timing_.stop(true, "[subflow->pcb.timely_cc.update_rate]");
       // TODO: seperate enpoint delay and fabric delay.
+      perf_timing_.start();
       subflow->pcb.swift_cc.adjust_wnd(to_usec(fabric_delay_tsc, freq_ghz),
                                        seg_size);
+      perf_timing_.stop(true, "[subflow->pcb.swift_cc.adjust_wnd]");
     } else {
+      perf_timing_.start();
       subflow->pcb.pcm_cc_io_slab->in.data_tx = seg_size;
       subflow->pcb.pcm_cc_io_slab->in.ack = 1;
       subflow->pcb.pcm_cc_io_slab->in.rtt = tsc_to_ns(fabric_delay_tsc);
       subflow->pcb.pcm_cc_io_slab->in.in_flight = *flow_unacked_bytes;
+      subflow->pcb.pcm_cc_io_slab->in.mask |=
+          (1 << PCM_SIG_DATA_TX) | (1 << PCM_SIG_ACK) | (1 << PCM_SIG_RTT) |
+          (1 << PCM_SIG_IN_FLIGHT);
       subflow->pcb.pcm_cc->flush_slab_input();
-      subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+      auto invoked = subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+      if (invoked)
+        perf_timing_.stop(
+            true, "[subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger()]");
     }
   }
 

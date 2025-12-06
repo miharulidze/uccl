@@ -110,7 +110,7 @@ class TimelyCC {
    * when the caller can reuse a sampled RDTSC.
    * @param sample_rtt_tsc The RTT sample in RDTSC cycles
    */
-  void update_rate(size_t _rdtsc, size_t sample_rtt_tsc, double ewma_alpha) {
+  __attribute__((noinline)) void update_rate(size_t _rdtsc, size_t sample_rtt_tsc, double ewma_alpha) {
     assert(_rdtsc >= 1000000000 && _rdtsc >= last_update_tsc_);  // Sanity check
     static constexpr bool kCcOptTimelyBypass = true;
     if (kCcOptTimelyBypass &&

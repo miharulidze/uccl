@@ -96,7 +96,7 @@ class SwiftCC {
     min_rtt_ = std::min(min_rtt_, delay);
   }
 
-  void adjust_wnd(double delay, uint32_t acked_bytes) {
+  __attribute__((noinline)) void adjust_wnd(double delay, uint32_t acked_bytes) {
     prev_cwnd_ = swift_cwnd_;
     bool cand = can_decrease();
 

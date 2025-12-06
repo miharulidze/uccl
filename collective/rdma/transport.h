@@ -291,6 +291,11 @@ class RDMAContext {
   inline bool rc_mode() { return io_ctx_->rc_mode_; }
 
  public:
+  using timing_backend = timing_lib::RdtscTimer;
+  timing_backend stats{
+      timing_lib::benchmark_timer<timing_backend>("PcmHandlerVm timer")};
+  timing_backend perf_timing_{stats};
+
   uint32_t last_qp_choice_ = 0;
 
   // 256-bit SACK bitmask => we can track up to 256 packets
@@ -803,11 +808,17 @@ class PcmRDMAContext : public RDMAContext {
   void EventOnRxACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {}
 
   void EventOnRxNACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {
+    perf_timing_.start();
     subflow->pcb.pcm_cc_io_slab->in.nack = sack_hdr->sack_bitmap_count.value();
     subflow->pcb.pcm_cc_io_slab->in.data_nacked =  // 1 * chunk_size_;
         sack_hdr->sack_bitmap_count.value() * chunk_size_;
+    subflow->pcb.pcm_cc_io_slab->in.mask |=
+        (1 << PCM_SIG_NACK) | (1 << PCM_SIG_DATA_NACKED);
     subflow->pcb.pcm_cc->flush_slab_input();
-    subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+    auto invoked = subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger();
+    if (invoked)
+      perf_timing_.stop(
+          true, "[subflow->pcb.pcm_cc->invoke_cc_algorithm_on_trigger()]");
     // std::cout << "got NACK!" << std::endl;
   }
 
@@ -826,6 +837,7 @@ class PcmLbRDMAContext : public PcmRDMAContext {
                              uint32_t chunk_size) override {
     if (can_use_last_choice(chunk_size)) return last_qp_choice_;
     subflow->pcb.pcm_lb_io_slab->in.tx_ready_pkts = 1;
+    subflow->pcb.pcm_lb_io_slab->in.mask |= (1 << PCM_SIG_TX_READY_PKTS);
     subflow->pcb.pcm_lb->flush_slab_input();
     subflow->pcb.pcm_lb->invoke_cc_algorithm_on_trigger();
     subflow->pcb.pcm_lb->fetch_slab_output();
@@ -833,11 +845,22 @@ class PcmLbRDMAContext : public PcmRDMAContext {
     return subflow->pcb.pcm_lb_io_slab->out.ev;
   }
 
+  void EventOnRxACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {
+    PcmRDMAContext::EventOnRxACK(subflow, sack_hdr);
+    subflow->pcb.pcm_lb_io_slab->in.ack = 1;
+    subflow->pcb.pcm_lb_io_slab->in.ack_ev = sack_hdr->path.value();
+    subflow->pcb.pcm_lb_io_slab->in.mask |=
+        (1 << PCM_SIG_ACK) | (1 << PCM_SIG_ACK_EV);
+    subflow->pcb.pcm_lb->flush_slab_input();
+  }
+
   void EventOnRxNACK(SubUcclFlow* subflow, UcclSackHdr* sack_hdr) override {
     // Call base implementation (note the exact capitalization of the method)
     PcmRDMAContext::EventOnRxNACK(subflow, sack_hdr);
     subflow->pcb.pcm_lb_io_slab->in.nack = 1;
     subflow->pcb.pcm_lb_io_slab->in.nack_ev = sack_hdr->path.value();
+    subflow->pcb.pcm_lb_io_slab->in.mask |=
+        (1 << PCM_SIG_NACK) | (1 << PCM_SIG_NACK_EV);
     subflow->pcb.pcm_lb->flush_slab_input();
   }
 };
